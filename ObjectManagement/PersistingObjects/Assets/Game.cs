@@ -3,25 +3,31 @@ using UnityEngine;
 
 public class Game : PersistableObject
 {
-    public PersistableObject prefab;
+    public ShapeFactory shapeFactory;
 
     public PersistentStorage storage;
 
+    public float CreationSpeed { get; set; }
+    public float DestructionSpeed { get; set; }
+
     public KeyCode createKey = KeyCode.C;
-
     public KeyCode newGameKey = KeyCode.N;
-
     public KeyCode saveKey = KeyCode.S;
-
     public KeyCode loadKey = KeyCode.L;
+    public KeyCode destroyKey = KeyCode.X;
 
-    List<PersistableObject> objects;
+    float creationProgress;
+    float destructionProgress;
+
+    List<Shape> shapes;
+
+    const int saveVersion = 1;
 
     private void Update()
     {
         if (Input.GetKeyDown(createKey))
         {
-            CreateObject();
+            CreateShape();
         }
         else if (Input.GetKey(newGameKey))
         {
@@ -29,58 +35,99 @@ public class Game : PersistableObject
         }
         else if (Input.GetKeyDown(saveKey))
         {
-            storage.Save(this);
+            storage.Save(this, saveVersion);
         }
         else if (Input.GetKeyDown(loadKey))
         {
             BeginNewGame();
             storage.Load(this);
         }
+        else if (Input.GetKeyDown(destroyKey))
+        {
+            DestroyShape();
+        }
+
+        creationProgress += Time.deltaTime * CreationSpeed;
+        while(creationProgress >= 1f)
+        {
+            creationProgress -= 1f;
+            CreateShape();
+        }
+
+        destructionProgress += Time.deltaTime * DestructionSpeed;
+        while (destructionProgress >= 1f)
+        {
+            destructionProgress -= 1f;
+            DestroyShape();
+        }
     }
 
     private void Awake()
     {
-        objects = new List<PersistableObject>();
+        shapes = new List<Shape>();
     }
 
-    private void CreateObject()
+    private void DestroyShape()
     {
-        PersistableObject o = Instantiate(prefab);
-        Transform t = o.transform;
+        if (shapes.Count <= 0)
+            return;
+
+        int index = Random.Range(0, shapes.Count);
+        shapeFactory.Reclaim(shapes[index]);
+        int lastIndex = shapes.Count - 1;
+        shapes[index] = shapes[lastIndex];
+        shapes.RemoveAt(lastIndex);
+    }
+
+    private void CreateShape()
+    {
+        Shape instance = shapeFactory.GetRandom();
+        Transform t = instance.transform;
         t.localPosition = Random.insideUnitSphere * 5f;
         t.localRotation = Random.rotation;
         t.localScale = Vector3.one * Random.Range(0.1f, 1f);
 
-        objects.Add(o);
+        shapes.Add(instance);
     }
 
     private void BeginNewGame()
     {
-        for (int i = 0; i < objects.Count; ++i)
+        for (int i = 0; i < shapes.Count; ++i)
         {
-            Destroy(objects[i].gameObject);
+            shapeFactory.Reclaim(shapes[i]);
         }
 
-        objects.Clear();
+        shapes.Clear();
     }
 
     public override void Save (GameDataWriter writer)
     {
-        writer.Write(objects.Count);
-        for (int i = 0; i < objects.Count; ++i)
+        writer.Write(shapes.Count);
+        for (int i = 0; i < shapes.Count; ++i)
         {
-            objects[i].Save(writer);
+            writer.Write(shapes[i].ShapeId);
+            writer.Write(shapes[i].MaterialId);
+            shapes[i].Save(writer);
         }
     }
 
     public override void Load(GameDataReader reader)
     {
-        int count = reader.ReadInt();
+        int version = reader.Version;
+        if (version > saveVersion)
+        {
+            Debug.LogError("Unsupported future save version " + version);
+            return;
+        }
+
+        int count = version <= 0 ? -version : reader.ReadInt();
         for (int i = 0; i < count; ++i)
         {
-            PersistableObject o = Instantiate(prefab);
-            o.Load(reader);
-            objects.Add(o);
+            int shapeId = version > 0 ? reader.ReadInt() : 0;
+            int materialId = version > 0 ? reader.ReadInt() : 0;
+            Shape instance = shapeFactory.Get(shapeId, materialId);
+            instance.Load(reader);
+            shapes.Add(instance);
         }
     }
 }
